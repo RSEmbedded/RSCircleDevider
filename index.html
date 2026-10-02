@@ -24,7 +24,7 @@ input[type=color]{width:44px;height:34px;border:1px solid var(--bd);border-radiu
 button{flex:1;padding:11px;border:0;border-radius:10px;background:var(--ac);color:#fff;font-size:.95rem;cursor:pointer}
 button.alt{background:transparent;color:var(--ac);border:1px solid var(--ac)}
 #pv{display:flex;flex-direction:column;align-items:center;gap:10px}
-canvas{width:100%;max-width:520px;aspect-ratio:1;border-radius:10px;background:#fff}
+canvas{cursor:pointer;width:100%;max-width:520px;aspect-ratio:1;border-radius:10px;background:#fff}
 #info{color:var(--mu);font-size:.9rem;text-align:center}
 </style></head><body>
 <main>
@@ -36,35 +36,52 @@ canvas{width:100%;max-width:520px;aspect-ratio:1;border-radius:10px;background:#
   <label for="rot">Start angle (°)</label>
   <input type="range" id="rot" min="0" max="360" value="0">
   <div class="row" style="margin-top:16px"><label><input type="checkbox" id="num" checked> Numbers</label><label><input type="checkbox" id="ang"> Angles</label><label><input type="checkbox" id="dot" checked> Center dot</label></div>
-  <div class="btns"><button id="dp">Download PNG</button><button class="alt" id="ds">Download SVG</button></div>
+  <div id="hint" style="margin-top:14px;font-size:.85rem;color:var(--mu)">Tap a part in the preview to remove it. Tap again to bring it back.</div>
+  <div class="btns"><button id="dp">Download PNG</button><button class="alt" id="ds">Download SVG</button><button class="alt" id="rs" style="flex-basis:100%">Restore all parts</button></div>
   <div id="msg" style="margin-top:8px;font-size:.85rem;color:var(--mu)"></div>
 </section>
 <section class="card" id="pv"><canvas id="cv" width="1000" height="1000"></canvas><div id="info"></div></section>
 </main>
 <script>
 const $=id=>document.getElementById(id);
-function params(){let n=Math.max(1,Math.min(360,parseInt($('n').value)||1));return{n,rot:+$('rot').value,lc:'#000',num:$('num').checked,dot:$('dot').checked,ang:$('ang').checked}}
-function fill(){return'#fff'}
+let rm=new Set(),lastN=0;
+function params(){const n=Math.max(1,Math.min(360,parseInt($('n').value)||1));if(n!==lastN){rm=new Set();lastN=n}
+return{n,rot:+$('rot').value,num:$('num').checked,ang:$('ang').checked,dot:$('dot').checked}}
 function hole(n,r){if(n<=10)return 0;return Math.min(r*0.4,6/(2*Math.PI/n))}
 function pt(c,r,a){return[c+r*Math.cos(a),c+r*Math.sin(a)]}
-function svg(p,S=1000){const c=S/2,r=S*0.46,st=p.rot*Math.PI/180-Math.PI/2,d=2*Math.PI/p.n;let o=`<svg xmlns="http://www.w3.org/2000/svg" width="${S}" height="${S}" viewBox="0 0 ${S} ${S}"><rect width="${S}" height="${S}" fill="#fff"/>`;
-if(p.n===1){o+=`<circle cx="${c}" cy="${c}" r="${r}" fill="${fill(p,0)}" stroke="${p.lc}" stroke-width="4"/>`}
-else{o+=`<circle cx="${c}" cy="${c}" r="${r}" fill="#fff" stroke="#000" stroke-width="4"/>`;const r0=hole(p.n,r);for(let i=0;i<p.n;i++){const a1=st+i*d,[ax,ay]=pt(c,r0,a1),[bx,by]=pt(c,r,a1);o+=`<line x1="${ax}" y1="${ay}" x2="${bx}" y2="${by}" stroke="#000" stroke-width="4"/>`}}
-if(p.dot)o+=`<circle cx="${c}" cy="${c}" r="7" fill="#000"/>`;
-if(p.num||p.ang)for(let i=0;i<p.n;i++){const [tx,ty]=pt(c,r*(p.n<3?.4:.68),st+(i+.5)*d);const t=p.ang?(360/p.n).toFixed(2).replace(/\.?0+$/,'')+'°':i+1;o+=`<text x="${tx}" y="${ty}" font-size="${Math.max(14,Math.min(40,S*0.4/p.n+10))}" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="#111">${t}</text>`}
+function G(p){return{c:500,r:460,st:p.rot*Math.PI/180-Math.PI/2,d:2*Math.PI/p.n}}
+function lbl(p,i){return p.ang?(360/p.n).toFixed(2).replace(/\.?0+$/,'')+'\u00b0':String(i+1)}
+function fs(p){return Math.max(14,Math.min(40,400/p.n+10))}
+function paint(p,ghost,cv){const {c,r,st,d}=G(p),x=cv.getContext('2d'),r0=hole(p.n,r);
+x.fillStyle='#fff';x.fillRect(0,0,1000,1000);x.lineJoin='round';x.lineWidth=4;
+let kept=0;
+for(let i=0;i<p.n;i++){const a1=st+i*d,a2=a1+d,off=rm.has(i);
+if(off&&!ghost)continue;if(!off)kept++;
+x.strokeStyle=off?'#bbb':'#000';x.setLineDash(off?[10,10]:[]);x.lineWidth=off?2:4;x.beginPath();
+if(p.n===1){x.arc(c,c,r,0,7)}else{const [ax,ay]=pt(c,r0,a1),[bx,by]=pt(c,r,a1),[ex,ey]=pt(c,r0,a2);x.moveTo(ax,ay);x.lineTo(bx,by);x.arc(c,c,r,a1,a2);x.lineTo(ex,ey)}
+x.stroke()}
+x.setLineDash([]);
+if(p.dot&&kept){x.fillStyle='#000';x.beginPath();x.arc(c,c,7,0,7);x.fill()}
+x.fillStyle='#111';x.textAlign='center';x.textBaseline='middle';x.font=fs(p)+'px sans-serif';
+if(p.num||p.ang)for(let i=0;i<p.n;i++){if(rm.has(i))continue;const [tx,ty]=pt(c,r*(p.n<3?.4:.68),st+(i+.5)*d);x.fillText(lbl(p,i),tx,ty)}
+return kept}
+function svg(p){const {c,r,st,d}=G(p),r0=hole(p.n,r);let o=`<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000" viewBox="0 0 1000 1000"><rect width="1000" height="1000" fill="#fff"/><g fill="none" stroke="#000" stroke-width="4" stroke-linejoin="round">`,k=0;
+for(let i=0;i<p.n;i++){if(rm.has(i))continue;k++;const a1=st+i*d,a2=a1+d;
+if(p.n===1){o+=`<circle cx="${c}" cy="${c}" r="${r}"/>`;continue}
+const [ax,ay]=pt(c,r0,a1),[bx,by]=pt(c,r,a1),[qx,qy]=pt(c,r,a2),[ex,ey]=pt(c,r0,a2);
+o+=`<path d="M${ax} ${ay}L${bx} ${by}A${r} ${r} 0 ${d>Math.PI?1:0} 1 ${qx} ${qy}L${ex} ${ey}"/>`}
+o+='</g>';if(p.dot&&k)o+=`<circle cx="${c}" cy="${c}" r="7" fill="#000"/>`;
+if(p.num||p.ang)for(let i=0;i<p.n;i++){if(rm.has(i))continue;const [tx,ty]=pt(c,r*(p.n<3?.4:.68),st+(i+.5)*d);o+=`<text x="${tx}" y="${ty}" font-size="${fs(p)}" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="#111">${lbl(p,i)}</text>`}
 return o+'</svg>'}
-function paint(p){const S=1000,c=S/2,r=S*0.46,st=p.rot*Math.PI/180-Math.PI/2,d=2*Math.PI/p.n,x=$('cv').getContext('2d');
-x.fillStyle='#fff';x.fillRect(0,0,S,S);x.strokeStyle='#000';x.lineWidth=4;x.lineJoin='round';
-if(p.n===1){x.beginPath();x.arc(c,c,r,0,7);x.stroke()}
-else{x.beginPath();x.arc(c,c,r,0,7);x.stroke();const r0=hole(p.n,r);for(let i=0;i<p.n;i++){const a1=st+i*d,[ax,ay]=pt(c,r0,a1),[bx,by]=pt(c,r,a1);x.beginPath();x.moveTo(ax,ay);x.lineTo(bx,by);x.stroke()}}
-if(p.dot){x.fillStyle='#000';x.beginPath();x.arc(c,c,7,0,7);x.fill()}
-if(p.num||p.ang){x.fillStyle='#111';x.textAlign='center';x.textBaseline='middle';x.font=Math.max(14,Math.min(40,S*0.4/p.n+10))+'px sans-serif';
-for(let i=0;i<p.n;i++){const [tx,ty]=pt(c,r*(p.n<3?.4:.68),st+(i+.5)*d);x.fillText(p.ang?(360/p.n).toFixed(2).replace(/\.?0+$/,'')+'\u00b0':String(i+1),tx,ty)}}}
-function draw(){const p=params();$('info').textContent=`${p.n} part${p.n>1?'s':''} \u00b7 ${(360/p.n).toFixed(2).replace(/\.?0+$/,'')}\u00b0 each`;paint(p)}
+function draw(){const p=params(),k=paint(p,true,$('cv'));$('info').textContent=`${k} of ${p.n} part${p.n>1?'s':''} shown \u00b7 ${(360/p.n).toFixed(2).replace(/\.?0+$/,'')}\u00b0 each`}
 ['n','rot','num','ang','dot'].forEach(i=>$(i).addEventListener('input',()=>{if(i==='n')$('nr').value=Math.min(60,$('n').value);draw()}));
 $('nr').addEventListener('input',()=>{$('n').value=$('nr').value;draw()});
+$('cv').addEventListener('click',e=>{const p=params(),{r,st,d}=G(p),R=$('cv').getBoundingClientRect(),x=(e.clientX-R.left)/R.width*1000-500,y=(e.clientY-R.top)/R.height*1000-500;
+if(Math.hypot(x,y)>r+10)return;let a=Math.atan2(y,x)-st;a=((a%(2*Math.PI))+2*Math.PI)%(2*Math.PI);const i=Math.floor(a/d)%p.n;
+rm.has(i)?rm.delete(i):rm.add(i);draw()});
+$('rs').onclick=()=>{rm=new Set();draw()};
 function save(filename,data){const u=URL.createObjectURL(data instanceof Blob?data:new Blob([data],{type:'image/svg+xml'}));const a=document.createElement('a');a.href=u;a.download=filename;document.body.appendChild(a);a.click();a.remove();$('msg').textContent='Saved \u2713'}
-$('dp').onclick=()=>{$('cv').toBlob(b=>save(`circle-${params().n}-parts.png`,b),'image/png')};
-$('ds').onclick=()=>save(`circle-${params().n}-parts.svg`,svg(params()));
+$('dp').onclick=()=>{const p=params();if(rm.size>=p.n){$('msg').textContent='All parts are removed. Restore some first.';return}const c=document.createElement('canvas');c.width=c.height=1000;paint(p,false,c);c.toBlob(b=>save(`circle-${p.n-rm.size}-parts.png`,b),'image/png')};
+$('ds').onclick=()=>{const p=params();if(rm.size>=p.n){$('msg').textContent='All parts are removed. Restore some first.';return}save(`circle-${p.n-rm.size}-parts.svg`,svg(p))};
 draw();
 </script></body></html>
