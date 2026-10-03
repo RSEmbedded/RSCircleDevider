@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>RS Circle Divider</title>
+<title> RS Circle Divider</title>
 <style>
 :root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#f6f5f1;--card:#fff;--tx:#1d1d1b;--mu:#6b6a64;--ac:#2f6fed;--bd:#dcdad2}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#17171a;--card:#212125;--tx:#eee;--mu:#9a9aa3;--ac:#6c9bff;--bd:#38383f}}
@@ -24,7 +24,7 @@ input[type=color]{width:44px;height:34px;border:1px solid var(--bd);border-radiu
 button{flex:1;padding:11px;border:0;border-radius:10px;background:var(--ac);color:#fff;font-size:.95rem;cursor:pointer}
 button.alt{background:transparent;color:var(--ac);border:1px solid var(--ac)}
 #pv{display:flex;flex-direction:column;align-items:center;gap:10px}
-canvas{cursor:pointer;width:100%;max-width:520px;aspect-ratio:1;border-radius:10px;background:#fff}
+canvas{touch-action:none;cursor:pointer;width:100%;max-width:520px;aspect-ratio:1;border-radius:10px;background:#fff}
 #info{color:var(--mu);font-size:.9rem;text-align:center}
 </style></head><body>
 <main>
@@ -33,10 +33,16 @@ canvas{cursor:pointer;width:100%;max-width:520px;aspect-ratio:1;border-radius:10
   <label for="n">Number of parts to draw</label>
   <input type="number" id="n" min="1" max="360" value="16">
   <input type="range" id="nr" min="1" max="60" value="16">
+  <label for="gap">Gap angle: <b id="gv">72°</b></label>
+  <input type="range" id="gap" min="0" max="340" value="72">
+  <label for="nd">Number from</label>
+  <select id="nd"><option value="l">Left end → right end</option><option value="r">Right end → left end</option></select>
   <label for="rot">Start angle (°)</label>
   <input type="range" id="rot" min="0" max="360" value="0">
   <div class="row" style="margin-top:16px"><label><input type="checkbox" id="num" checked> Numbers</label><label><input type="checkbox" id="ang"> Angles</label><label><input type="checkbox" id="dot" checked> Center dot</label></div>
-  <div id="hint" style="margin-top:14px;font-size:.85rem;color:var(--mu)">Only the number of parts you type is drawn. The rest of the circle stays empty at the bottom. You can also tap a part in the preview to remove it or bring it back.</div>
+  <div class="row" style="margin-top:12px"><label><input type="checkbox" id="bd"> Add Border </label></div>
+  <input type="range" id="bw" min="5" max="30" value="15" title="Border width">
+  <div id="hint" style="margin-top:14px;font-size:.85rem;color:var(--mu)">Drag the two blue dots at the ends of the arc to stretch the gap. The parts re-divide automatically. Tap a part to remove it or bring it back.</div>
   <div class="btns"><button id="dpdf" style="flex-basis:100%">Download PDF</button><button id="dp" class="alt">Download PNG</button><button class="alt" id="ds">Download SVG</button><button class="alt" id="rs" style="flex-basis:100%">Reset parts</button></div>
   <div id="msg" style="margin-top:8px;font-size:.85rem;color:var(--mu)"></div>
 </section>
@@ -45,42 +51,55 @@ canvas{cursor:pointer;width:100%;max-width:520px;aspect-ratio:1;border-radius:10
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script>
 const $=id=>document.getElementById(id);
-const SPAN=288,START=216; /* arc covers 288 deg, 72 deg gap at the bottom */
-let rm=new Set(),lastN=0;
+let S=216,W=288,rm=new Set(),lastN=0,drag=null,sup=false; /* S = left end angle, W = arc width (deg, clockwise from top) */
 function params(){const n=Math.max(1,Math.min(360,parseInt($('n').value)||1));if(n!==lastN){lastN=n;rm=new Set()}
-return{n,rot:+$('rot').value,num:$('num').checked,ang:$('ang').checked,dot:$('dot').checked}}
-function G(p){const dd=SPAN/p.n;return{c:500,r:460,st:p.rot*Math.PI/180-Math.PI/2,dd,d:dd*Math.PI/180,j0:Math.ceil(144/dd-1e-9)}}
+return{n,bd:$('bd').checked,bw:+$('bw').value,rot:+$('rot').value,num:$('num').checked,ang:$('ang').checked,dot:$('dot').checked}}
+function G(p){const dd=W/p.n,cov=(S+W>360+1e-9)||S<1e-9;return{c:500,r:460,st:p.rot*Math.PI/180-Math.PI/2,dd,d:dd*Math.PI/180,j0:0}}
 function hole(d,r){return d>=0.6?0:Math.min(r*0.4,6/d)}
 function pt(c,r,a){return[c+r*Math.cos(a),c+r*Math.sin(a)]}
-function lbl(p,g,j){return p.ang?g.dd.toFixed(2).replace(/\.?0+$/,'')+'\u00b0':String(((j-g.j0)%p.n+p.n)%p.n+1)}
+function lbl(p,g,j){return p.ang?g.dd.toFixed(2).replace(/\.?0+$/,'')+'\u00b0':String($('nd').value==='r'?p.n-j:j+1)}
 function fs(p){return Math.max(12,Math.min(40,400/p.n+10))}
-function A(g,j){return g.st+(START*Math.PI/180)+j*g.d}
-function paint(p,ghost,cv){const g=G(p),{c,r,d}=g,x=cv.getContext('2d'),r0=hole(d,r);
+function A(g,j){return g.st+(S+j*g.dd)*Math.PI/180}
+function paint(p,ghost,cv){const g=G(p),{c,r,d}=g,x=cv.getContext('2d'),r0=hole(d,r),ri=p.bd?r*(1-p.bw/100):r;
 x.fillStyle='#fff';x.fillRect(0,0,1000,1000);x.lineJoin='round';let kept=0;
 for(let j=0;j<p.n;j++){const a1=A(g,j),a2=a1+d,off=rm.has(j);
 if(off&&!ghost)continue;if(!off)kept++;
 x.strokeStyle=off?'#bbb':'#000';x.setLineDash(off?[10,10]:[]);x.lineWidth=off?2:4;x.beginPath();
-const [ax,ay]=pt(c,r0,a1),[bx,by]=pt(c,r,a1),[ex,ey]=pt(c,r0,a2);x.moveTo(ax,ay);x.lineTo(bx,by);x.arc(c,c,r,a1,a2);x.lineTo(ex,ey);x.stroke()}
+const [ax,ay]=pt(c,r0,a1),[bx,by]=pt(c,r,a1),[ex,ey]=pt(c,r0,a2);x.moveTo(ax,ay);x.lineTo(bx,by);x.arc(c,c,r,a1,a2);x.lineTo(ex,ey);if(p.bd){const [ix,iy]=pt(c,ri,a1),[mx,my]=pt(c,ri,a1+d/2),[nx,ny]=pt(c,r,a1+d/2);x.moveTo(ix,iy);x.arc(c,c,ri,a1,a2);x.moveTo(mx,my);x.lineTo(nx,ny)}x.stroke()}
 x.setLineDash([]);
 if(p.dot&&kept){x.fillStyle='#000';x.beginPath();x.arc(c,c,7,0,7);x.fill()}
 x.fillStyle='#111';x.textAlign='center';x.textBaseline='middle';x.font=fs(p)+'px sans-serif';
-if(p.num||p.ang)for(let j=0;j<p.n;j++){if(rm.has(j))continue;const [tx,ty]=pt(c,r*(p.n<3?.4:.68),A(g,j)+d/2);x.fillText(lbl(p,g,j),tx,ty)}
+if(p.num||p.ang)for(let j=0;j<p.n;j++){if(rm.has(j))continue;const [tx,ty]=pt(c,ri*(p.n<3?.4:.68),A(g,j)+d/2);x.fillText(lbl(p,g,j),tx,ty)}
+if(ghost&&W<359.5){for(const a of [g.st+S*Math.PI/180,g.st+(S+W)*Math.PI/180]){const [hx,hy]=pt(c,r,a);x.fillStyle='#2f6fed';x.strokeStyle='#fff';x.lineWidth=5;x.beginPath();x.arc(hx,hy,16,0,7);x.fill();x.stroke()}}
 return kept}
-function svg(p){const g=G(p),{c,r,d}=g,r0=hole(d,r);let o=`<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000" viewBox="0 0 1000 1000"><rect width="1000" height="1000" fill="#fff"/><g fill="none" stroke="#000" stroke-width="4" stroke-linejoin="round">`,k=0;
+function svg(p){const g=G(p),{c,r,d}=g,r0=hole(d,r),ri=p.bd?r*(1-p.bw/100):r;let o=`<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000" viewBox="0 0 1000 1000"><rect width="1000" height="1000" fill="#fff"/><g fill="none" stroke="#000" stroke-width="4" stroke-linejoin="round">`,k=0;
 for(let j=0;j<p.n;j++){if(rm.has(j))continue;k++;const a1=A(g,j),a2=a1+d;
 const [ax,ay]=pt(c,r0,a1),[bx,by]=pt(c,r,a1),[qx,qy]=pt(c,r,a2),[ex,ey]=pt(c,r0,a2);
-o+=`<path d="M${ax} ${ay}L${bx} ${by}A${r} ${r} 0 ${d>Math.PI?1:0} 1 ${qx} ${qy}L${ex} ${ey}"/>`}
+o+=`<path d="M${ax} ${ay}L${bx} ${by}A${r} ${r} 0 ${d>Math.PI?1:0} 1 ${qx} ${qy}L${ex} ${ey}"/>`;if(p.bd){const [ix,iy]=pt(c,ri,a1),[jx,jy]=pt(c,ri,a2),[mx,my]=pt(c,ri,a1+d/2),[nx,ny]=pt(c,r,a1+d/2);o+=`<path d="M${ix} ${iy}A${ri} ${ri} 0 ${d>Math.PI?1:0} 1 ${jx} ${jy}M${mx} ${my}L${nx} ${ny}"/>`}}
 o+='</g>';if(p.dot&&k)o+=`<circle cx="${c}" cy="${c}" r="7" fill="#000"/>`;
-if(p.num||p.ang)for(let j=0;j<p.n;j++){if(rm.has(j))continue;const [tx,ty]=pt(c,r*(p.n<3?.4:.68),A(g,j)+d/2);o+=`<text x="${tx}" y="${ty}" font-size="${fs(p)}" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="#111">${lbl(p,g,j)}</text>`}
+if(p.num||p.ang)for(let j=0;j<p.n;j++){if(rm.has(j))continue;const [tx,ty]=pt(c,ri*(p.n<3?.4:.68),A(g,j)+d/2);o+=`<text x="${tx}" y="${ty}" font-size="${fs(p)}" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="#111">${lbl(p,g,j)}</text>`}
 return o+'</svg>'}
-function draw(){const p=params(),g=G(p),k=paint(p,true,$('cv'));$('info').textContent=`${k} part${k>1?'s':''} drawn \u00b7 ${g.dd.toFixed(2).replace(/\.?0+$/,'')}\u00b0 each`}
-['n','rot','num','ang','dot'].forEach(i=>$(i).addEventListener('input',()=>{if(i==='n'){params();$('nr').value=Math.min($('n').value,60)}draw()}));
+const f2=v=>v.toFixed(2).replace(/\.?0+$/,'');
+function draw(){const p=params(),g=G(p),k=paint(p,true,$('cv'));$('gv').textContent=Math.round(360-W)+'\u00b0';$('info').textContent=`${k} part${k>1?'s':''} drawn \u00b7 ${f2(g.dd)}\u00b0 each \u00b7 gap ${f2(360-W)}\u00b0`}
+['n','rot','num','ang','dot','bd','bw'].forEach(i=>$(i).addEventListener('input',()=>{if(i==='n'){params();$('nr').value=Math.min($('n').value,60)}draw()}));
 $('nr').addEventListener('input',()=>{$('n').value=$('nr').value;draw()});
-$('cv').addEventListener('click',e=>{const p=params(),g=G(p),R=$('cv').getBoundingClientRect(),x=(e.clientX-R.left)/R.width*1000-500,y=(e.clientY-R.top)/R.height*1000-500;
-if(Math.hypot(x,y)>g.r+10)return;let a=(Math.atan2(y,x)-g.st)*180/Math.PI-START;a=((a%360)+360)%360;if(a>=SPAN)return;const j=Math.min(p.n-1,Math.floor(a/g.dd));
+$('gap').addEventListener('input',()=>{const gp=+$('gap').value;W=360-gp;S=(180+gp/2)%360;rm=new Set();draw()});
+function xy(e){const R=$('cv').getBoundingClientRect();return[(e.clientX-R.left)/R.width*1000-500,(e.clientY-R.top)/R.height*1000-500]}
+function theta(x,y,g){return(((Math.atan2(y,x)-g.st)*180/Math.PI)%360+360)%360}
+$('cv').addEventListener('pointerdown',e=>{if(W>=359.5)return;const p=params(),g=G(p),[x,y]=xy(e);
+for(const [k,ang] of [['L',S],['R',S+W]]){const a=g.st+ang*Math.PI/180,[hx,hy]=pt(0,g.r,a);if(Math.hypot(x-hx,y-hy)<45){drag={k,E:(S+W)%360};$('cv').setPointerCapture(e.pointerId);e.preventDefault();return}}});
+$('cv').addEventListener('pointermove',e=>{if(!drag)return;const p=params(),g=G(p),[x,y]=xy(e),t=theta(x,y,g);let nw;
+if(drag.k==='L'){nw=((drag.E-t)%360+360)%360;if(nw<10||nw>355)return;S=t;W=nw}else{nw=((t-S)%360+360)%360;if(nw<10||nw>355)return;W=nw}
+rm=new Set();$('gap').value=Math.round(360-W);draw()});
+const endDrag=()=>{if(drag){drag=null;sup=true;setTimeout(()=>sup=false,50)}};
+$('cv').addEventListener('pointerup',endDrag);$('cv').addEventListener('pointercancel',endDrag);
+$('cv').addEventListener('click',e=>{if(sup)return;const p=params(),g=G(p),[x,y]=xy(e);
+if(Math.hypot(x,y)>g.r+10)return;let a=theta(x,y,g)-S;a=((a%360)+360)%360;if(a>=W)return;const j=Math.min(p.n-1,Math.floor(a/g.dd));
 rm.has(j)?rm.delete(j):rm.add(j);draw()});
+$('nd').addEventListener('input',()=>draw());
 $('rs').onclick=()=>{rm=new Set();draw()};
 function save(filename,data){const ext=filename.split('.').pop(),type={svg:'image/svg+xml',pdf:'application/pdf',png:'image/png'}[ext];const u=URL.createObjectURL(data instanceof Blob?data:new Blob([data],{type}));const a=document.createElement('a');a.href=u;a.download=filename;document.body.appendChild(a);a.click();a.remove();$('msg').textContent='Saved \u2713'}
+
 
 function ready(){const p=params();if(rm.size>=p.n){$('msg').textContent='All parts are removed. Reset parts first.';return null}return{p,k:p.n-rm.size}}
 $('dp').onclick=()=>{const r=ready();if(!r)return;const c=document.createElement('canvas');c.width=c.height=1000;paint(r.p,false,c);c.toBlob(b=>save(`circle-${r.k}-parts.png`,b),'image/png')};
